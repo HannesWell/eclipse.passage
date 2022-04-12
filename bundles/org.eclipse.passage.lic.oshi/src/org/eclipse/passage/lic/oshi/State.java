@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2020, 2021 ArSysOp
+ * Copyright (c) 2020, 2022 ArSysOp
  *
  * This program and the accompanying materials are made available under the
  * terms of the Eclipse Public License 2.0 which is available at
@@ -9,150 +9,115 @@
  *
  * Contributors:
  *     ArSysOp - initial API and implementation
+ *     IILS mbH (Hannes Wellmann) - rewrite to use OSHI 6 and to compute properties lazy
  *******************************************************************************/
 package org.eclipse.passage.lic.oshi;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
+import static java.util.Map.entry;
 
-import org.eclipse.passage.lic.api.LicensingException;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.StringJoiner;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
 import org.eclipse.passage.lic.api.inspection.EnvironmentProperty;
 import org.eclipse.passage.lic.internal.base.inspection.hardware.BaseBoard;
 import org.eclipse.passage.lic.internal.base.inspection.hardware.Computer;
 import org.eclipse.passage.lic.internal.base.inspection.hardware.Cpu;
 import org.eclipse.passage.lic.internal.base.inspection.hardware.Firmware;
 import org.eclipse.passage.lic.internal.base.inspection.hardware.OS;
-import org.eclipse.passage.lic.internal.oshi.i18n.AssessmentMessages;
 
 import oshi.SystemInfo;
-import oshi.hardware.Baseboard;
-import oshi.hardware.CentralProcessor;
-import oshi.hardware.ComputerSystem;
-import oshi.hardware.HardwareAbstractionLayer;
-import oshi.software.os.OperatingSystem;
 
-/**
- * <p>
- * State has aggressively not thread-safe hardware state reading phase, which is
- * done on construction time.
- * </p>
- * <p>
- * Reading hardware (done eagerly on a State construction) boils down to lots
- * tricky native code invocation, which has static parts and does not stand
- * concurrent access.
- * </p>
- * <p>
- * Thus, State construction must be synchronized externally: until one State if
- * fully constructed, no another one must even think about it.
- * </p>
- * <p>
- * We construct it under a class-dedicated lock only in a
- * {@linkplain HardwareEnvironment} service, which, it turn, must have only
- * single instance at runtime (which is guaranteed by {@code Framework}).
- * </p>
- * <p>
- * Regarding to the data it collects - it's fully immutable, always fresh and
- * absolutely thread safe.
- * </p>
- */
 final class State {
 
-	private final EnvironmentProperties hardware;
-	private final List<Swath<?>> swaths;
+	private static final Map<EnvironmentProperty, Function<SystemInfo, String>> HARDWARE_PROPERTIES = Map.ofEntries( //
+			entry(new OS.Family(), s -> s.getOperatingSystem().getFamily()), //
+			entry(new OS.Manufacturer(), s -> s.getOperatingSystem().getManufacturer()), //
+			entry(new OS.Version(), s -> s.getOperatingSystem().getVersionInfo().getVersion()), //
+			entry(new OS.BuildNumber(), s -> s.getOperatingSystem().getVersionInfo().getBuildNumber()), //
 
-	State() throws LicensingException {
-		this.hardware = new EnvironmentProperties();
-		this.swaths = Arrays.asList(new Swath.Disks(), new Swath.Nets());
-		read(); // eager due to OSHI specifics
-	}
+			// Computer env currently uses the wrong family which leads to name clashes:
+			// https://github.com/eclipse-passage/passage/issues/1096
+			entry(new Computer.Manufacturer(), s -> s.getHardware().getComputerSystem().getManufacturer()), //
+			entry(new Computer.Model(), s -> s.getHardware().getComputerSystem().getModel()), //
+			entry(new Computer.Serial(), s -> s.getHardware().getComputerSystem().getSerialNumber()), //
 
-	boolean hasValue(EnvironmentProperty property, String expected) {
-		String regexp = expected.replaceAll("\\*", ".*"); //$NON-NLS-1$//$NON-NLS-2$
-		Optional<Swath<?>> swath = swaths.stream().filter(sw -> sw.relates(property.family())).findAny();
-		if (swath.isPresent()) {
-			return swath.get().hasValue(property, regexp);
+			entry(new BaseBoard.Manufacturer(),
+					s -> s.getHardware().getComputerSystem().getBaseboard().getManufacturer()), //
+			entry(new BaseBoard.Model(), s -> s.getHardware().getComputerSystem().getBaseboard().getModel()), //
+			entry(new BaseBoard.Version(), s -> s.getHardware().getComputerSystem().getBaseboard().getVersion()), //
+			entry(new BaseBoard.Serial(), s -> s.getHardware().getComputerSystem().getBaseboard().getSerialNumber()), //
+
+			entry(new Firmware.Manufacturer(),
+					s -> s.getHardware().getComputerSystem().getFirmware().getManufacturer()), //
+			entry(new Firmware.Version(), s -> s.getHardware().getComputerSystem().getFirmware().getVersion()), //
+			entry(new Firmware.ReleaseDate(), s -> s.getHardware().getComputerSystem().getFirmware().getReleaseDate()), //
+			entry(new Firmware.Name(), s -> s.getHardware().getComputerSystem().getFirmware().getName()), //
+			entry(new Firmware.Description(), s -> s.getHardware().getComputerSystem().getFirmware().getDescription()), //
+
+			entry(new Cpu.Vendor(), s -> s.getHardware().getProcessor().getProcessorIdentifier().getVendor()), //
+			entry(new Cpu.Family(), s -> s.getHardware().getProcessor().getProcessorIdentifier().getFamily()), //
+			entry(new Cpu.Model(), s -> s.getHardware().getProcessor().getProcessorIdentifier().getModel()), //
+			entry(new Cpu.Name(), s -> s.getHardware().getProcessor().getProcessorIdentifier().getName()), //
+			entry(new Cpu.ProcessorId(), s -> s.getHardware().getProcessor().getProcessorIdentifier().getProcessorID()) //
+	);
+
+	private final SystemInfo system = new SystemInfo();
+	private final List<Swath<?>> swaths = List.of(new Swath.Disks(system), new Swath.Nets(system));
+
+	boolean hasMatchingValue(EnvironmentProperty property, String expected) {
+		String regexp = expected.strip().replace("*", ".*"); //$NON-NLS-1$//$NON-NLS-2$
+		if (regexp.equals(".*")) { // shortcut for wildcard-values //$NON-NLS-1$
+			return HARDWARE_PROPERTIES.containsKey(property) || swaths.stream().anyMatch(s -> s.hasProperty(property));
 		}
-		return Optional.ofNullable(hardware.get(property))//
-				.map(value -> value.matches(regexp))//
-				.orElse(false);
+		Optional<String> hardwareValue = hardwareValue(property);
+		Stream<String> swatValues = swaths.stream().flatMap(s -> s.valuesFor(property));
+		return Stream.concat(hardwareValue.stream(), swatValues).anyMatch(v -> v.matches(regexp));
 	}
 
-	Set<EnvironmentProperty> properties() {
-		return hardware.all();
+	private Optional<String> hardwareValue(EnvironmentProperty property) {
+		Function<SystemInfo, String> getter = HARDWARE_PROPERTIES.get(property);
+		return getter != null ? readProperty(getter, system) : Optional.empty();
 	}
 
-	String value(EnvironmentProperty key) {
-		return hardware.get(key);
-	}
-
-	List<Swath<?>> swaths() {
-		return swaths;
-	}
-
-	private void read() throws LicensingException {
-		try {
-			SystemInfo system = new SystemInfo();
-			readOS(system.getOperatingSystem());
-			readHal(system.getHardware());
-			swaths.forEach(swath -> swath.read(system));
-		} catch (Throwable e) {
-			throw new LicensingException(AssessmentMessages.State_error_reading_hw, e);
+	static <T> Optional<String> readProperty(Function<T, String> getter, T source) {
+		if (getter != null) {
+			try {
+				return Optional.ofNullable(getter.apply(source));
+			} catch (Throwable e) { // native errors, assume absent
+			}
 		}
+		return Optional.empty();
 	}
 
-	private void readOS(OperatingSystem info) {
-		hardware.store(info::getFamily, new OS.Family());
-		hardware.store(info::getManufacturer, new OS.Manufacturer());
-		hardware.store(info.getVersion()::getVersion, new OS.Version());
-		hardware.store(info.getVersion()::getBuildNumber, new OS.BuildNumber());
+	// compute glance
+
+	String getGlance() {
+		StringJoiner out = new StringJoiner("\n"); //$NON-NLS-1$
+		HARDWARE_PROPERTIES.entrySet().stream().collect(Collectors.groupingBy(e -> e.getKey().family()))
+				.forEach((family, properties) -> {
+					out.add(family);
+					properties.stream().forEach(p -> {
+						Optional<String> value = readProperty(p.getValue(), system);
+						appendProperty(p.getKey(), value, out);
+					});
+				});
+		swaths.forEach(swath -> {
+			List<Map<EnvironmentProperty, Optional<String>>> allValues = swath.allValues();
+			for (int i = 0; i < allValues.size(); i++) {
+				out.add(swath.family() + " #" + i); //$NON-NLS-1$
+				allValues.get(i).forEach((property, value) -> appendProperty(property, value, out));
+			}
+		});
+		return out.toString();
 	}
 
-	private void readHal(HardwareAbstractionLayer hal) {
-		readPart(hal::getComputerSystem, this::readSystem);
-		readPart(hal::getProcessor, this::readProcessor);
-	}
-
-	private void readSystem(ComputerSystem info) {
-		hardware.store(info::getManufacturer, new Computer.Manufacturer());
-		hardware.store(info::getModel, new Computer.Model());
-		hardware.store(info::getSerialNumber, new Computer.Serial());
-		readPart(info::getBaseboard, this::readBaseBoard);
-		readPart(info::getFirmware, this::readFirmware);
-	}
-
-	private void readBaseBoard(Baseboard info) {
-		hardware.store(info::getManufacturer, new BaseBoard.Manufacturer());
-		hardware.store(info::getModel, new BaseBoard.Model());
-		hardware.store(info::getVersion, new BaseBoard.Version());
-		hardware.store(info::getSerialNumber, new BaseBoard.Serial());
-	}
-
-	private void readFirmware(oshi.hardware.Firmware info) {
-		hardware.store(info::getManufacturer, new Firmware.Manufacturer());
-		hardware.store(info::getVersion, new Firmware.Version());
-		hardware.store(info::getReleaseDate, new Firmware.ReleaseDate());
-		hardware.store(info::getName, new Firmware.Name());
-		hardware.store(info::getDescription, new Firmware.Description());
-	}
-
-	private void readProcessor(CentralProcessor info) {
-		hardware.store(info::getVendor, new Cpu.Vendor());
-		hardware.store(info::getFamily, new Cpu.Family());
-		hardware.store(info::getModel, new Cpu.Model());
-		hardware.store(info::getName, new Cpu.Name());
-		hardware.store(info::getProcessorID, new Cpu.ProcessorId());
-	}
-
-	/**
-	 * #569352 HAL likes to fail on native access, thus we isolate each HAL aspect
-	 * assessment and legalize absence of corresponding properties.
-	 */
-	private <T> void readPart(Supplier<T> aspect, Consumer<T> read) {
-		new FragileData<>(aspect, read).supply();
+	private static void appendProperty(EnvironmentProperty property, Optional<String> value, StringJoiner out) {
+		value.ifPresent(v -> out.add("\t" + property.name() + ": " + v)); //$NON-NLS-1$ //$NON-NLS-2$
 	}
 
 }

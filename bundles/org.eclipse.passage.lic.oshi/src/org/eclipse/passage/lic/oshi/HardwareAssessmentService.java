@@ -9,11 +9,11 @@
  *
  * Contributors:
  *     ArSysOp - initial API and implementation
+ *     IILS mbH (Hannes Wellmann) - rewrite to use OSHI 6 and to compute properties lazy
  *******************************************************************************/
 package org.eclipse.passage.lic.oshi;
 
 import org.eclipse.passage.lic.api.EvaluationType;
-import org.eclipse.passage.lic.api.LicensingException;
 import org.eclipse.passage.lic.api.conditions.evaluation.ExpressionEvaluationException;
 import org.eclipse.passage.lic.api.conditions.evaluation.ExpressionTokenAssessmentService;
 import org.eclipse.passage.lic.api.inspection.RuntimeEnvironment;
@@ -26,7 +26,6 @@ import org.eclipse.passage.lic.internal.oshi.i18n.AssessmentMessages;
  */
 public final class HardwareAssessmentService implements ExpressionTokenAssessmentService {
 
-	private final EvaluationType type = new EvaluationType.Hardware();
 	private final RuntimeEnvironmentRegistry environments;
 
 	public HardwareAssessmentService(RuntimeEnvironmentRegistry environments) {
@@ -35,13 +34,14 @@ public final class HardwareAssessmentService implements ExpressionTokenAssessmen
 
 	@Override
 	public EvaluationType id() {
-		return type;
+		return HardwareEnvironment.TYPE;
 	}
 
 	@Override
 	public boolean equal(String key, String value) throws ExpressionEvaluationException {
 		try {
-			return hardware().isAssuptionTrue(new BaseEnvironmentProperty.Of(key), value);
+			RuntimeEnvironment service = environments.get().service(id());
+			return service.isAssuptionTrue(new BaseEnvironmentProperty.Of(key), value);
 		} catch (Exception e) {
 			throw new ExpressionEvaluationException(//
 					String.format(AssessmentMessages.HardwareAssessmentService_error_on_assessment, //
@@ -49,13 +49,4 @@ public final class HardwareAssessmentService implements ExpressionTokenAssessmen
 					e);
 		}
 	}
-
-	private RuntimeEnvironment hardware() throws LicensingException {
-		if (environments.get().hasService(type)) {
-			return environments.get().service(type);
-		}
-		throw new LicensingException(String.format(//
-				AssessmentMessages.HardwareAssessmentService_no_hw_inspector, type));
-	}
-
 }

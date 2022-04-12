@@ -361,6 +361,7 @@
               url="https://download.eclipse.org/tools/orbit/downloads/drops/R20220302172233/repository/"/>
         </repositoryList>
       </targlet>
+      <composedTarget>org.eclipse.passage.target</composedTarget>
     </setupTask>
     <setupTask
         xsi:type="projects:ProjectsImportTask">

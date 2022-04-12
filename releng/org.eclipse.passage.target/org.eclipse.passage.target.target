@@ -94,5 +94,15 @@
 			<unit id="javax.mail" version="0.0.0"/>
 			<unit id="javax.servlet" version="0.0.0"/>
 		</location>
+		<location includeDependencyDepth="infinite" includeDependencyScopes="compile" includeSource="true" label="Licensing" missingManifest="error" type="Maven">
+			<dependencies>
+				<dependency>
+					<groupId>com.github.oshi</groupId>
+					<artifactId>oshi-core-java11</artifactId>
+					<version>6.2.1</version>
+					<type>jar</type>
+				</dependency>
+			</dependencies>
+		</location>
 	</locations>
 </target>
