@@ -40,6 +40,7 @@ public final class SimpleMapExpressionEvaluationService implements ExpressionEva
 		Objects.requireNonNull(assessor);
 		verifyProtocol(expression);
 		SimpleMapExpression map = map(expression);
+
 		for (String key : map.keys()) {
 			boolean passed = equal(key, map.expected(key), assessor);
 			if (!passed) {

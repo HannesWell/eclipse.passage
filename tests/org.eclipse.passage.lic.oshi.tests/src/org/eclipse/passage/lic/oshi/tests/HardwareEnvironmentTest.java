@@ -59,21 +59,21 @@ public final class HardwareEnvironmentTest extends RuntimeEnvironmentContractTes
 		return new OS.Family();
 	}
 
+//	initializeRequiredClasses();
+
 	@Test
 	public void testMultipleOSHIReads() throws Exception {
 
 		long start, time = start = System.currentTimeMillis();
 
-		initializeRequiredClasses();
+		time = measureState(time);
+		time = measureState(time);
+		time = measureState(time);
+		time = measureState(time);
 
 		time = time(time, "class-loading"); //$NON-NLS-1$
 
-		time = measureState(time);
-		time = measureState(time);
-		time = measureState(time);
-		time = measureState(time);
-		time = measureState(time);
-
+		time = measureIsAssuptionTrue(new OS.Family(), time);
 		time = measureIsAssuptionTrue(new OS.Family(), time);
 		time = measureIsAssuptionTrue(new OS.Version(), time);
 
@@ -96,6 +96,24 @@ public final class HardwareEnvironmentTest extends RuntimeEnvironmentContractTes
 		time = measureIsAssuptionTrue(new NetworkInterface.MacAddress(), time);
 
 		System.out.println("Overall " + (System.currentTimeMillis() - start)); //$NON-NLS-1$
+
+	}
+
+	private long measureIsAssuptionTrue(EnvironmentProperty property, long start) throws LicensingException {
+		HardwareEnvironment environment = new HardwareEnvironment();
+		environment.isAssuptionTrue(property, ""); //$NON-NLS-1$
+		return time(start, property.toString());
+	}
+
+	private long measureState(long start) throws LicensingException {
+		RuntimeEnvironment environment = new HardwareEnvironment();
+		environment.state();
+		return time(start, "State"); //$NON-NLS-1$
+	}
+
+	private long time(long start, String msg) {
+		System.out.println("Reading " + msg + " took " + (System.currentTimeMillis() - start)); //$NON-NLS-1$ //$NON-NLS-2$
+		return System.currentTimeMillis();
 	}
 
 	private void initializeRequiredClasses() throws ClassNotFoundException {
@@ -121,22 +139,5 @@ public final class HardwareEnvironmentTest extends RuntimeEnvironmentContractTes
 			field.get(null);
 		} catch (ReflectiveOperationException e) {
 		}
-	}
-
-	private long measureIsAssuptionTrue(EnvironmentProperty property, long start) throws LicensingException {
-		HardwareEnvironment environment = new HardwareEnvironment();
-		environment.isAssuptionTrue(property, ""); //$NON-NLS-1$
-		return time(start, property.toString());
-	}
-
-	private long measureState(long start) throws LicensingException {
-		RuntimeEnvironment environment = new HardwareEnvironment();
-		environment.state();
-		return time(start, "State"); //$NON-NLS-1$
-	}
-
-	private long time(long start, String msg) {
-		System.out.println("Reading " + msg + " took " + (System.currentTimeMillis() - start)); //$NON-NLS-1$ //$NON-NLS-2$
-		return System.currentTimeMillis();
 	}
 }
