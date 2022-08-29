@@ -16,7 +16,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import org.eclipse.passage.lic.base.access.Access;
-import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -30,7 +29,6 @@ public final class AccessCanUseTest {
 	}
 
 	@Test
-	@Ignore // TODO: re-issue license with extended validity period
 	public void allowKnownFeatureUnderLicense() {
 		assertTrue(new Access(new TestFramework()).canUse("prince-to-frog")); //$NON-NLS-1$
 	}
